@@ -8,6 +8,7 @@ from zope.interface import *
 import distinctipy
 import random
 import time
+import math
 
 random.seed(time.time())
 
@@ -45,10 +46,13 @@ class Portfolio:
 
     def calc_gain(self, eod=False):
         for plant in self.plants:
+            # if self.name == "big_coal":
+            #     print(plant.name, plant.used, plant.capacity)
             self.money += plant.used * plant.price
             self.money -= plant.used * plant.var_cost
             if eod:
-                self.money -= plant.daily_om         
+                self.money -= plant.daily_om
+            plant.used = 0 # reset
         if eod:
             self.money *= 1.05 # HACK?
 
@@ -64,7 +68,13 @@ class NaiveBreakeven:
         for plant in plants:
             plant.price = plant.var_cost
 
+@implementer(Strategy)
+class Asshole:
+    def set_prices(portfolios, hour, plants):
+        for plant in plants:
+            plant.price = 0
 
+            
 @implementer(Strategy)
 class SlightlyLessNaiveBreakeven:
     """Aims for breakeven but factors in the O&M cost.
@@ -75,11 +85,34 @@ class SlightlyLessNaiveBreakeven:
             plant.price = plant.var_cost + (plant.daily_om/(4*plant.capacity))
 
 @implementer(Strategy)
+class PessimisticBreakeven:
+    def set_prices(portfolios, hour, plants):
+        def compare(p):
+            return p.var_cost
+
+        total_unaccounted_om = 0
+        sort = sorted(plants, key=compare)
+
+        half = math.floor(len(sort)/2)
+        for i in range(half):
+            total_unaccounted_om = sort[half+i].daily_om
+                    
+        for plant in plants:
+            plant.price = plant.var_cost + (total_unaccounted_om/(0.5*len(plants)*plant.capacity))
+            
+@implementer(Strategy)
+class Intersection:
+    def set_prices(portfolios, hour, plants):
+        for plant in plants:
+            plant.price = max(40, plant.var_cost)        
+
+@implementer(Strategy)
 class SlightProfit:
     """Tries to make a slight profit via a 10% markup."""
     def set_prices(portfolios, hour, plants):
         for plant in plants:
             plant.price = plant.var_cost * 1.10
+
 @dataclass
 class Price:
     src: Plant
@@ -144,11 +177,13 @@ def plot_hour(portfolios, prices, hour):
         pallette[p.name] = colors.colors[i]
 
     plot_prices(prices, pallette)
-        
-    # for i in range(16):
+
+    # for i in range(1,17):
+    #     plot_demand_curve(i)
     plot_demand_curve(hour)
+        
     plt.ylim([0, max([price.value for price in prices])*1.01])
-    plt.xlim([0, sum([p.total_prod() for p in portfolios])*1.01])
+    # plt.xlim([0, sum([p.total_prod() for p in portfolios])*1.01])
     
     from matplotlib.lines import Line2D
     custom_lines = [Line2D([0], [0], color=pallette[portfolios[i].name], lw=4) for i in range(len(portfolios))]
@@ -180,15 +215,89 @@ class ConservativePrePlan:
                         break
                     counter += 1
                     next_price = prices[i+counter]
-        
 
+@implementer(Strategy)
+class RealIntersection:
+    def set_prices(portfolios, hour, plants):
+        copy = portfolios.copy()
+        prices = []
+        for p in copy:
+            for plant in p.plants:
+                prices.append(Price(plant, p.name, plant.capacity, plant.var_cost))
+        prices.sort()
+
+        x = 0
+        pt = 0
+        demand = Demand(hour)
+        for price in prices:
+            d = demand.f(x+price.capacity)
+            if d < price.value:
+                pt = price.value
+                break
+            x += price.capacity
+        
+        for plant in plants:
+            plant.price = max(pt, plant.var_cost)
+
+
+@implementer(Strategy)
+class AggroRealIntersection:
+    def set_prices(portfolios, hour, plants):
+        copy = portfolios.copy()
+        prices = []
+        for p in copy:
+            for plant in p.plants:
+                prices.append(Price(plant, p.name, plant.capacity, plant.var_cost))
+        prices.sort()
+
+        x = 0
+        pt = 0
+        demand = Demand(hour)
+        for price in prices:
+            d = demand.f(x+price.capacity)
+            if d < price.value:
+                pt = price.value
+                break
+            x += price.capacity
+        
+        for plant in plants:
+            plant.price = max(pt*1.15, plant.var_cost)
+
+
+    # LATER
+# @implementer(Strategy)
+# class AggroMarkup:    
+#     # HACK just so hacky
+#     def set_prices(portfolios, hour, plants):
+#         copy = portfolios.copy()
+#         prices = []
+#         for p in copy:
+#             DEFAULT_STRAT.set_prices(portfolios, hour, p.plants) 
+#             for plant in p.plants:
+#                 prices.append(Price(plant, p.name, plant.capacity, plant.price))
+#         prices.sort()
+#         d = Demand(hour)
+#         for i, price in enumerate(prices):
+#             if price.src in plants and i+1 < len(prices):
+#                 plant = plants[plants.index(price.src)]                
+#                 next_price = prices[i+1]
+#                 counter = 1
+#                 while i+counter < len(prices)-1:                    
+#                     plant.price = max(prices[i+counter].value-0.001, 0)
+#                     if next_price.src not in plants:
+#                         break
+#                     counter += 1
+#                     next_price = prices[i+counter]
+                    
 DEFAULT_STRAT = SlightProfit # NaiveBreakeven
             
 def get_portfolios():
     portfolios = []
     for f in os.listdir("./portfolios"):
         df = pd.read_csv(f"./portfolios/{f}")
-        portfolio = Portfolio(f[:-4], [], random.choice([NaiveBreakeven, SlightProfit, SlightlyLessNaiveBreakeven, ConservativePrePlan]), 0)
+        strat = RealIntersection # Intersection # random.choice([NaiveBreakeven, SlightProfit, SlightlyLessNaiveBreakeven])
+        # strat = PessimisticBreakeven
+        portfolio = Portfolio(f[:-4], [], strat, 0)
         # print(portfolio.strategy)
         for i, row in df.iterrows():
             portfolio.plants.append(Plant(
@@ -203,7 +312,7 @@ def get_portfolios():
     
     return portfolios      
 
-def run_sim(portfolios):
+def run_sim(portfolios, vv = False, graph = False):
     for hour in range(1,17):
         for p in portfolios:
             p.set_prices(portfolios, hour)
@@ -213,30 +322,58 @@ def run_sim(portfolios):
         demand = Demand(hour)
         for step in steps:
             d = demand.f(step[0]+step[2].capacity)
-            if step[1] > d:        
-                step[2].src.used = step[2].capacity - ((step[1]-d)/demand.slope)
+            if step[1] > d:
+                # if step[2].asker == "big_coal": 
+                #     print(((step[1]-d)/demand.slope))                
+                step[2].src.used = step[2].capacity + ((step[1]-d)/demand.slope)
                 break
             else:
                 step[2].src.used = step[2].capacity
 
-        # print(f"HOUR {hour}")
+        if vv: 
+            print(f"HOUR {hour}")
         for p in portfolios:        
             p.calc_gain(eod=(hour % 4 == 0))
-
-        plot_hour(portfolios, prices, hour)         
+        if vv:
+            for p in reversed(sorted(portfolios)):
+                print(p.name, p.money)
+            print()
+        if graph:
+            plot_hour(portfolios, prices, hour)
                     
 # def get_net_gain(agg_prices, portfolio, hour):  
 
-for i in range(1):
-    portfolios = get_portfolios()    
-    portfolios[i].strategy = ConservativePrePlan
+# debts = {
+#     "big_coal": 80e3,
+#     "big_gas": 0,
+#     "bay_views": 100e3,
+#     "beachfront": 0,
+#     "east_bay": 0,
+#     "old_timers": 500e3,
+#     "fossil_light": 650e3,
+# }
+
+for j in range(1):
+    portfolios = get_portfolios()
+    # portfolios[j].strategy = RealIntersection
+    # for p in portfolios:
+    #     p.money -= debts[p.name]
+    
+    # for p in portfolios:
+    #     print(p.name, sum([k.capacity for k in p.plants]))
+    # portfolios[j].strategy = Asshole
+    #portfolios[i].money -= 10000
     # plot_hour(portfolios, prices, 0)
     
-    print("\n", portfolios[i].name, "\n")
-    run_sim(portfolios)
+    print("\n", portfolios[j].name, "\n")
+    if portfolios[j].name == "big_coal":
+        run_sim(portfolios, vv = True , graph=True)
+    else:
+        run_sim(portfolios)
     
     for p in reversed(sorted(portfolios)):
         print(p.name, p.money)
-        # print(hour)    
-        # plot_hour(portfolios, prices, hour)    
+    #     # print(hour)    
+    #     # plot_hour(portfolios, prices, hour)    
         
+    # 
