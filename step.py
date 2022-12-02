@@ -1,3 +1,4 @@
+
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
@@ -9,6 +10,16 @@ import distinctipy
 import random
 import time
 import math
+
+order= [
+    "big_coal",
+    "big_gas",
+    "bay_views",
+    "beachfront",
+    "east_bay",
+    "old_timers",
+    "fossil_light",
+]
 
 random.seed(time.time())
 
@@ -46,8 +57,8 @@ class Portfolio:
 
     def calc_gain(self, eod=False):
         for plant in self.plants:
-            # if self.name == "big_coal":
-            #     print(plant.name, plant.used, plant.capacity)
+            # if self.name == "fossil_light":
+            #     print(plant.name, plant.used, plant.capacity, plant.price)
             self.money += plant.used * plant.price
             self.money -= plant.used * plant.var_cost
             if eod:
@@ -55,6 +66,8 @@ class Portfolio:
             plant.used = 0 # reset
         if eod:
             self.money *= 1.05 # HACK?
+        # if self.name == "fossil_light":
+        #     print(self.money)
 
     def __eq__(self, other):
         return self.money == other.money
@@ -121,9 +134,11 @@ class Price:
     value: float
     
     def __eq__(self, other):
-        return self.value == other.value
+        return (self.value == other.value and self.asker == other.asker)
     def __lt__(self, other):
-        return self.value < other.value        
+        if self.value == other.value:
+             return order.index(self.asker) < order.index(other.asker)
+        return self.value < other.value
 
 def aggregate_prices(portfolios):
     prices = []    
@@ -264,6 +279,29 @@ class AggroRealIntersection:
             plant.price = max(pt*1.15, plant.var_cost)
 
 
+@implementer(Strategy)
+class UndercutRealIntersection:
+    def set_prices(portfolios, hour, plants):
+        copy = portfolios.copy()
+        prices = []
+        for p in copy:
+            for plant in p.plants:
+                prices.append(Price(plant, p.name, plant.capacity, plant.var_cost))
+        prices.sort()
+
+        x = 0
+        pt = 0
+        demand = Demand(hour)
+        for price in prices:
+            d = demand.f(x+price.capacity)
+            if d < price.value:
+                pt = price.value
+                break
+            x += price.capacity
+        
+        for plant in plants:
+            plant.price = max(pt-.1, plant.var_cost)
+
     # LATER
 # @implementer(Strategy)
 # class AggroMarkup:    
@@ -343,21 +381,27 @@ def run_sim(portfolios, vv = False, graph = False):
                     
 # def get_net_gain(agg_prices, portfolio, hour):  
 
-# debts = {
-#     "big_coal": 80e3,
-#     "big_gas": 0,
-#     "bay_views": 100e3,
-#     "beachfront": 0,
-#     "east_bay": 0,
-#     "old_timers": 500e3,
-#     "fossil_light": 650e3,
-# }
+debts = {
+    "big_coal": 160e3,
+    "big_gas": 53e3,
+    "bay_views": 210e3,
+    "beachfront": 60e3,
+    "east_bay": 100e3,
+    "old_timers": 650e3,
+    "fossil_light": 832e3,
+}
 
 for j in range(1):
     portfolios = get_portfolios()
-    # portfolios[j].strategy = RealIntersection
-    # for p in portfolios:
-    #     p.money -= debts[p.name]
+    portfolios[1].strategy = RealIntersection
+   #  portfolios[j].strategy = Asshole
+    
+    for p in portfolios:
+        if p.name == "fossil_light":
+            p.strategy = UndercutRealIntersection
+        if p.name == "east_bay":
+            p.strategy = UndercutRealIntersection
+        p.money -= debts[p.name]
     
     # for p in portfolios:
     #     print(p.name, sum([k.capacity for k in p.plants]))
@@ -365,11 +409,11 @@ for j in range(1):
     #portfolios[i].money -= 10000
     # plot_hour(portfolios, prices, 0)
     
-    print("\n", portfolios[j].name, "\n")
-    if portfolios[j].name == "big_coal":
-        run_sim(portfolios, vv = True , graph=True)
-    else:
-        run_sim(portfolios)
+    # print("\n", portfolios[1].name, "\n")
+    # if portfolios[j].name == "big_coal":
+    #     run_sim(portfolios)#, vv = True , graph=True)
+    # else:
+    run_sim(portfolios)#, vv=True,graph=True)
     
     for p in reversed(sorted(portfolios)):
         print(p.name, p.money)
