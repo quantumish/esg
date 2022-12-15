@@ -54,7 +54,7 @@ class Portfolio:
     def set_prices(self, portfolios, hour):
         self.strategy.set_prices(portfolios, hour, self.plants)
 
-    def calc_gain(self, eod=False):
+    def calc_gain(self, eod=False, bod=False):
         old = self.money
         for plant in self.plants:
             # if self.name == "fossil_light":
@@ -65,7 +65,7 @@ class Portfolio:
                 self.money -= plant.daily_om
             plant.used = 0 # reset
         # print(f"expect {self.name} profit {self.money-old}")
-        if eod:
+        if bod:
             self.money *= 1.05 # HACK?
         # if self.name == "fossil_light":
         #     print(self.money)
@@ -259,6 +259,8 @@ class CancerComboStrat:
         for plant in plants:
             if type(self.amt) == list:
                 actual_pt = pt-self.amt[hour % 4]
+            elif callable(self.amt):
+                actual_pt = pt-self.amt(hour)
             else:
                 actual_pt = pt-self.amt
 
@@ -367,10 +369,13 @@ class UndercutRealIntersection:
                 pt = price.value
                 break
             x += price.capacity
+        print("INTERSECTION", pt)
 
         for plant in plants:
             if type(self.amt) == list:
                 plant.price = max(pt-self.amt[hour % 4], plant.var_cost)
+            elif callable(self.amt):
+                actual_pt = pt-self.amt(hour)
             else:
                 plant.price = max(pt-self.amt, plant.var_cost)
 
@@ -430,11 +435,11 @@ def run_sim(portfolios, vv = False, graph = False, start=1):
         prices = aggregate_prices(portfolios)
         steps = get_step_representation(prices)
 
-        # print(hour)
-        # for p in portfolios:
-        #     if p.name == "fossil_light":
-        #         for plant in p.plants:
-        #             print(plant.name, plant.price)
+        print(hour)
+        for p in portfolios:
+            if p.name == "fossil_light":
+                for plant in p.plants:
+                    print(plant.name, plant.price)
 
         demand = Demand(hour)
         for step in steps:
@@ -450,7 +455,7 @@ def run_sim(portfolios, vv = False, graph = False, start=1):
         if vv:
             print(f"HOUR {hour}")
         for p in portfolios:
-            p.calc_gain(eod=(hour % 4 == 1))
+            p.calc_gain(eod=(hour % 4 == 0), bod=(hour % 4 == 1))
         if vv:
             for p in reversed(sorted(portfolios)):
                 print(p.name, p.money)
@@ -460,25 +465,57 @@ def run_sim(portfolios, vv = False, graph = False, start=1):
 
 # def get_net_gain(agg_prices, portfolio, hour):
 
+# debts = {
+#     "big_coal": 160e3,
+#     "big_gas": 53e3,
+#     "bay_views": 210e3,
+#     "beachfront": 60e3,
+#     "east_bay": 100e3,
+#     "old_timers": 650e3,
+#     "fossil_light": 832e3,
+# }
+
+
+# debts = {
+#     "big_coal": -154927.00,
+#     "big_gas": -24376.53,
+#     "bay_views": -79707.50,
+#     "beachfront": 30531.19,
+#     "east_bay": 28203.62,
+#     "old_timers": -343771.25,
+#     "fossil_light": -435459.35,
+# }
+
+
 debts = {
-    "big_coal": 160e3,
-    "big_gas": 53e3,
-    "bay_views": 210e3,
-    "beachfront": 60e3,
-    "east_bay": 100e3,
-    "old_timers": 650e3,
-    "fossil_light": 832e3,
+    "big_coal": -118800.62,
+    "big_gas": -2492.36,
+    "bay_views": -2600.67,
+    "beachfront": 65422.25,
+    "east_bay": 59623.80,
+    "old_timers": -164724.81,
+    "fossil_light": -216156.43,
 }
 
-diff = {
-    "big_coal": -8316,
-    "big_gas": -20580.5,
-    "bay_views": 210e3,
-    "beachfront": 22333.8708,
-    "east_bay": 9849.5,
-    "old_timers": 143985,
-    "fossil_light": 207693,
-}
+
+
+
+# diff = {
+#     "big_coal": -20000.00 + 4750.00 + 10450.00 + 47273.00 + -20000.00,
+#     "big_gas": -13642.50 + -2942.50 + -3995.50 + -4481.50 + 72617.50 + -12481.50,
+#     "bay_views": 11053.10+17951.40+25976.40+-3351.95+11053.10+18648.05+71257.90+-3351.95,
+#     "beachfront": 2128.00+6564.56+28785.00+-15609.50+2047.00+6279.00+83779.50+-18385.77,
+#     "east_bay": 1293.50+5337.50+13123.00+-9904.50+1404.00+5782.50+131142.64+-10217.50,
+#     "old_timers": 39465.00+45865.00+54190.00+4465.00+45140.00+53040.00+115449.50+8040.00,
+#     "fossil_light": 54808.00+60496.00+65585.50+28508.26+60138.05+64865.45+108197.50+28752.00,
+# }
+
+def margins(hour):
+    if hour == 15:
+        return .01 # HEAVY SURGE
+    elif hour == 11:
+        return .01 # SURGE
+    return .01   # REGULAR
 
 for j in range(1):
     portfolios = get_portfolios()
@@ -487,30 +524,30 @@ for j in range(1):
 
     for p in portfolios:
         if p.name == "fossil_light": # us
-            p.strategy = UndercutRealIntersection(-.1)
+            p.strategy = CancerComboStrat(margins)
         if p.name == "old_timers": # annli/gigi
             # Pessimistic Scenario
-            p.strategy = UndercutRealIntersection(-.1)
+            p.strategy = UndercutRealIntersection(0)
             # p.strategy = AggroRealIntersection(1.16)
             # Optimistic Scenario
             # p.strategy = UndercutRealIntersection(.25)
         if p.name == "big_gas": # hazel/nico/xander
             # Pessimistic Scenario
             # p.strategy = NaiveBreakeven(5)
-            p.strategy = UndercutRealIntersection(-.1)
+            p.strategy = UndercutRealIntersection(0)
             # Neutral Scenario
             #p.strategy = AggroRealIntersection(1)
             # Optimistic Scenario
             # p.strategy = AggroRealIntersection(1.10)
         if p.name == "east_bay": # alex/adam/nixie
             # Pessimistic
-            p.strategy = UndercutRealIntersection(-.1)
+            p.strategy = UndercutRealIntersection(0)
             # p.strategy = AggroRealIntersection(1.28)
             # Optimistic
             # p.strategy = UndercutRealIntersection(.25)
         if p.name == "big_coal": # anya/laura/nick
             # Pessimistic
-            # p.strategy = NaiveBreakeven(10)
+            # p.strategy = NaiveBreakeven(10)dis
             # Optimistic
             p.strategy = UndercutRealIntersection(0)
             # p.strategy = AggroRealIntersection(1.20)
@@ -519,16 +556,16 @@ for j in range(1):
             # p.strategy = NaiveBreakeven(10)
             # Optimistic
             # p.strategy = AggroRealIntersection(1.18)
-            p.strategy = UndercutRealIntersection(-.2)
+            p.strategy = UndercutRealIntersection(0)
         if p.name == "beachfront": # riley/coco
             # Pessimistic
             # p.strategy = NaiveBreakeven(10)
             # Optimistic
-            p.strategy = UndercutRealIntersection(-.1)
+            p.strategy = UndercutRealIntersection(0)
             # p.strategy = AggroRealIntersection(1.5)
 
-        p.money -= debts[p.name]*1.05
-        p.money += diff[p.name]
+        p.money = debts[p.name]
+        # p.money += diff[p.name]
 
     # for p in portfolios:
     #     print(p.name, sum([k.capacity for k in p.plants]))
@@ -540,8 +577,10 @@ for j in range(1):
     # if portfolios[j].name == "big_coal":
     #     run_sim(portfolios)#, vv = True , graph=True)
     # else:
-    run_sim(portfolios, start=5)#, vv=True,graph=True)
-
+    for p in reversed(sorted(portfolios)):
+        print(p.name, p.money)
+    run_sim(portfolios, vv=True, start=13)#, vv=True,graph=True)
+    print()
     for p in reversed(sorted(portfolios)):
         print(p.name, p.money)
     #     p.money = -debts[p.name]
